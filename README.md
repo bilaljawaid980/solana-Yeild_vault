@@ -274,4 +274,4 @@ MIT License — free to use and modify.
 
 ---
 
-*Built with ❤️ on Solana by [bilaljawaid980](https://github.com/bilaljawaid980)*
+*Built on Solana by [bilaljawaid980](https://github.com/bilaljawaid980)*
