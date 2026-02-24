@@ -70,14 +70,14 @@ async function main() {
   const program = anchor.workspace.Vault as Program<Vault>;
 
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint4"), vaultOwner.toBuffer()], program.programId
   );
   const [depositorStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("depositor3"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
+    [Buffer.from("depositor4"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
     program.programId
   );
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault4"), vaultOwner.toBuffer()], program.programId
   );
 
   // Check vault exists

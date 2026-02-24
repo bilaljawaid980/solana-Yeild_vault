@@ -6,90 +6,73 @@ import { getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 import * as readline from "readline";
 import fs from "fs";
 
-async function askQuestion(question: string): Promise<string> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+function askQuestion(question: string): Promise<string> {
   return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
+    rl.question(question, (answer) => resolve(answer.trim()));
   });
 }
 
 async function main() {
-  const connection = new anchor.web3.Connection(
-    "https://api.devnet.solana.com",
-    "confirmed"
-  );
+  const connection = new anchor.web3.Connection("https://api.devnet.solana.com", "confirmed");
 
   console.log("═══════════════════════════════════════════");
   console.log("       VAULT DEPOSITOR CLI");
   console.log("═══════════════════════════════════════════");
 
-  // Ask for wallet keypair path
-  const walletPath = await askQuestion(
-    "Enter your wallet keypair path (e.g. /root/.config/solana/id.json): "
-  );
+  const walletPath = await askQuestion("Enter your wallet keypair path (e.g. /root/.config/solana/id.json): ");
 
   if (!fs.existsSync(walletPath)) {
     console.log("❌ Wallet file not found at:", walletPath);
-    return;
+    rl.close(); return;
   }
 
   let userKeypair: Keypair;
   try {
-    userKeypair = Keypair.fromSecretKey(
-      Buffer.from(JSON.parse(fs.readFileSync(walletPath, "utf-8")))
-    );
+    userKeypair = Keypair.fromSecretKey(Buffer.from(JSON.parse(fs.readFileSync(walletPath, "utf-8"))));
   } catch (e) {
     console.log("❌ Invalid keypair file!");
-    return;
+    rl.close(); return;
   }
 
-  // Ask for vault owner address
-  const vaultOwnerInput = await askQuestion(
-    "Enter vault owner address: "
-  );
+  const vaultOwnerInput = await askQuestion("Enter vault owner address: ");
 
   let vaultOwner: PublicKey;
   try {
     vaultOwner = new PublicKey(vaultOwnerInput);
   } catch (e) {
     console.log("❌ Invalid vault owner address!");
-    return;
+    rl.close(); return;
   }
 
   const wallet = new anchor.Wallet(userKeypair);
-  const provider = new anchor.AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
-  });
+  const provider = new anchor.AnchorProvider(connection, wallet, { commitment: "confirmed" });
   anchor.setProvider(provider);
   const program = anchor.workspace.Vault as Program<Vault>;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault4"), vaultOwner.toBuffer()], program.programId
   );
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint4"), vaultOwner.toBuffer()], program.programId
   );
   const [depositorStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("depositor3"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
+    [Buffer.from("depositor4"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
     program.programId
   );
 
-  // Check vault exists
   let vaultState: any;
   try {
     vaultState = await program.account.vaultState.fetch(vaultStatePDA);
   } catch (e) {
     console.log("❌ Vault not found for this owner address!");
-    return;
+    rl.close(); return;
   }
 
   const solBalance = await connection.getBalance(userKeypair.publicKey);
+  const minDepositLamports = vaultState.minDeposit.toNumber();
+  const minDepositSol = minDepositLamports / LAMPORTS_PER_SOL;
 
   console.log("───────────────────────────────────────────");
   console.log("Your wallet   :", userKeypair.publicKey.toString());
@@ -97,9 +80,9 @@ async function main() {
   console.log("Vault owner   :", vaultOwner.toString());
   console.log("Vault balance :", vaultState.balance.toNumber() / LAMPORTS_PER_SOL, "SOL");
   console.log("Lock period   :", Number(vaultState.lockPeriod) / 86400, "days");
+  console.log("Min deposit   :", minDepositSol, "SOL");
   console.log("───────────────────────────────────────────");
 
-  // Check if already registered
   let isRegistered = false;
   try {
     await program.account.depositorState.fetch(depositorStatePDA);
@@ -109,7 +92,6 @@ async function main() {
     console.log("⚠️  You are NOT registered in this vault yet");
   }
 
-  // Ask what to do
   console.log("\nWhat do you want to do?");
   console.log("1. Register into vault");
   console.log("2. Deposit SOL");
@@ -123,15 +105,13 @@ async function main() {
   if (choice === "1") {
     if (isRegistered) {
       console.log("❌ You are already registered!");
-      return;
+      rl.close(); return;
     }
 
-    const confirm = await askQuestion(
-      `\nRegister your wallet into vault (${vaultOwnerInput})? (yes/no): `
-    );
+    const confirm = await askQuestion(`\nRegister your wallet into vault? (yes/no): `);
     if (confirm.toLowerCase() !== "yes") {
       console.log("❌ Cancelled.");
-      return;
+      rl.close(); return;
     }
 
     const tx = await program.methods
@@ -155,50 +135,48 @@ async function main() {
   else if (choice === "2") {
     if (!isRegistered) {
       console.log("❌ You must register first! Run again and choose option 1.");
-      return;
+      rl.close(); return;
     }
 
-    const amountInput = await askQuestion(
-      "\nEnter amount to deposit in SOL (must be multiple of 0.1): "
-    );
+    const amountInput = await askQuestion(`\nEnter amount to deposit in SOL (min ${minDepositSol} SOL, multiples only): `);
     const solAmount = parseFloat(amountInput);
 
     if (isNaN(solAmount) || solAmount <= 0) {
       console.log("❌ Invalid amount!");
-      return;
+      rl.close(); return;
     }
 
-    if ((solAmount * LAMPORTS_PER_SOL) % 100_000_000 !== 0) {
-      console.log("❌ Amount must be a multiple of 0.1 SOL!");
-      return;
+    const lamports = Math.round(solAmount * LAMPORTS_PER_SOL);
+
+    if (lamports < minDepositLamports) {
+      console.log("❌ Amount below minimum deposit of", minDepositSol, "SOL!");
+      rl.close(); return;
     }
 
-    if (solBalance < solAmount * LAMPORTS_PER_SOL) {
+    if (lamports % minDepositLamports !== 0) {
+      console.log("❌ Amount must be a multiple of", minDepositSol, "SOL!");
+      rl.close(); return;
+    }
+
+    if (solBalance < lamports) {
       console.log("❌ Not enough SOL in your wallet!");
-      console.log("Your balance:", solBalance / LAMPORTS_PER_SOL, "SOL");
-      return;
+      rl.close(); return;
     }
 
     const unlockDate = new Date(Date.now() + Number(vaultState.lockPeriod) * 1000);
     console.log("\n⚠️  Your SOL will be locked until:", unlockDate.toLocaleString());
 
-    const confirm = await askQuestion(
-      `\nConfirm deposit of ${solAmount} SOL? (yes/no): `
-    );
+    const confirm = await askQuestion(`\nConfirm deposit of ${solAmount} SOL? (yes/no): `);
     if (confirm.toLowerCase() !== "yes") {
       console.log("❌ Deposit cancelled.");
-      return;
+      rl.close(); return;
     }
 
-    // Get or create token account
     const tokenAccount = await getOrCreateAssociatedTokenAccount(
-      connection,
-      userKeypair,
-      lpMintPDA,
-      userKeypair.publicKey
+      connection, userKeypair, lpMintPDA, userKeypair.publicKey
     );
 
-    const amount = new anchor.BN(solAmount * LAMPORTS_PER_SOL);
+    const amount = new anchor.BN(lamports);
     const vaultBefore = vaultState.balance.toNumber();
 
     const tx = await program.methods
@@ -216,12 +194,13 @@ async function main() {
     const vaultAfter = (await program.account.vaultState.fetch(vaultStatePDA)).balance.toNumber();
     const lpBalance = await connection.getTokenAccountBalance(tokenAccount.address);
     const depState = await program.account.depositorState.fetch(depositorStatePDA);
+    const lpMinted = lamports / minDepositLamports;
 
     console.log("\n═══════════════════════════════════════════");
     console.log("✅ Deposit successful!");
     console.log("───────────────────────────────────────────");
     console.log("Deposited     :", solAmount, "SOL");
-    console.log("LP received   :", solAmount / 0.1, "LP tokens");
+    console.log("LP received   :", lpMinted, "LP tokens");
     console.log("Vault before  :", vaultBefore / LAMPORTS_PER_SOL, "SOL");
     console.log("Vault after   :", vaultAfter / LAMPORTS_PER_SOL, "SOL");
     console.log("Your LP total :", lpBalance.value.uiAmount, "LP");
@@ -232,13 +211,12 @@ async function main() {
     console.log("═══════════════════════════════════════════");
   }
 
-  // ─────────────────────────────────────────
-  // OPTION 3 — Exit
-  // ─────────────────────────────────────────
   else if (choice === "3") {
     console.log("Goodbye!");
   } else {
     console.log("❌ Invalid choice!");
   }
+
+  rl.close();
 }
-main().catch(console.error);
+main().catch((e) => { console.error(e); rl.close(); });

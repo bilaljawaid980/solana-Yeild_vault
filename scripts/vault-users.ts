@@ -11,10 +11,10 @@ async function main() {
   const vaultOwner = provider.wallet.publicKey;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault4"), vaultOwner.toBuffer()], program.programId
   );
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint3"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint4"), vaultOwner.toBuffer()], program.programId
   );
 
   const vaultState = await program.account.vaultState.fetch(vaultStatePDA);
@@ -22,14 +22,20 @@ async function main() {
   const totalLp = lpSupply.value.uiAmount || 0;
   const now = Math.floor(Date.now() / 1000);
 
-  const allDepositors = await program.account.depositorState.all([
+  const allDepositors = (await program.account.depositorState.all([
     {
       memcmp: {
         offset: 8 + 32,
         bytes: vaultOwner.toBase58(),
       },
     },
-  ]);
+  ])).filter((d) => {
+    const [expectedPDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from("depositor4"), d.account.depositor.toBuffer(), vaultOwner.toBuffer()],
+      program.programId
+    );
+    return expectedPDA.equals(d.publicKey);
+  });
 
   console.log("═══════════════════════════════════════════════════════");
   console.log("              VAULT USERS");
