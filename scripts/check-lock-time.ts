@@ -18,7 +18,7 @@ async function main() {
   const vaultOwner = new PublicKey("7LA1ZMrc4j19sCSnXFmmiLvjo6KVWENwv9aS4oXYKq2E");
 
   const [depositorStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("depositor5"), depositorKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
+    [Buffer.from("depositor7"), depositorKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
     program.programId
   );
 

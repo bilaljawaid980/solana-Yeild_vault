@@ -6,10 +6,19 @@ import * as readline from "readline";
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
+const MIN_LOCK_SECONDS = 120;        // 2 minutes
+const MAX_LOCK_SECONDS = 2592000;    // 30 days
+
 function askQuestion(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => resolve(answer.trim()));
   });
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 3600) return `${seconds} seconds (${(seconds / 60).toFixed(1)} minutes)`;
+  if (seconds < 86400) return `${seconds} seconds (${(seconds / 3600).toFixed(2)} hours)`;
+  return `${seconds} seconds (${(seconds / 86400).toFixed(4)} days)`;
 }
 
 async function main() {
@@ -19,7 +28,7 @@ async function main() {
   const owner = provider.wallet.publicKey;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault5"), owner.toBuffer()],
+    [Buffer.from("vault7"), owner.toBuffer()],
     program.programId
   );
 
@@ -37,7 +46,7 @@ async function main() {
   console.log("Admin wallet    :", owner.toString());
   console.log("───────────────────────────────────────────");
   console.log("CURRENT RULES:");
-  console.log("Lock period     :", currentLockDays, "days (", currentLockSeconds, "seconds )");
+  console.log("Lock period     :", formatDuration(currentLockSeconds));
   console.log("Min deposit     :", currentMinSol, "SOL (", currentMinLamports, "lamports )");
   console.log("Vault fee       :", currentFeePercent, "% of yield kept by admin");
   console.log("───────────────────────────────────────────");
@@ -65,19 +74,31 @@ async function main() {
   // ─────────────────────────────────────────
   if (choice === "1" || choice === "4") {
     console.log("\n─── CHANGE LOCK PERIOD ─────────────────────");
-    console.log("Current:", currentLockDays, "days");
+    console.log("Current         :", formatDuration(currentLockSeconds));
+    console.log("Allowed range   :", MIN_LOCK_SECONDS, "seconds (2 min) to", MAX_LOCK_SECONDS, "seconds (30 days)");
+    console.log("───────────────────────────────────────────");
+    console.log("Quick reference:");
+    console.log("  120     = 2 minutes   ← good for testing");
+    console.log("  300     = 5 minutes");
+    console.log("  3600    = 1 hour");
+    console.log("  86400   = 1 day");
+    console.log("  172800  = 2 days");
+    console.log("  345600  = 4 days");
+    console.log("  604800  = 7 days");
+    console.log("  2592000 = 30 days     ← maximum");
+    console.log("───────────────────────────────────────────");
 
-    const lockInput = await askQuestion("Enter new lock period in DAYS (e.g. 1, 2, 4, 7): ");
-    const lockDays = parseFloat(lockInput);
+    const lockInput = await askQuestion("Enter new lock period in SECONDS: ");
+    const lockSeconds = parseInt(lockInput);
 
-    if (isNaN(lockDays) || lockDays <= 0) {
+    if (isNaN(lockSeconds) || lockSeconds < MIN_LOCK_SECONDS || lockSeconds > MAX_LOCK_SECONDS) {
       console.log("❌ Invalid lock period!");
+      console.log("   Must be between", MIN_LOCK_SECONDS, "and", MAX_LOCK_SECONDS, "seconds.");
       rl.close(); return;
     }
 
-    const lockSeconds = Math.floor(lockDays * 86400);
     newLockPeriod = new anchor.BN(lockSeconds);
-    console.log("✅ New lock period:", lockDays, "days =", lockSeconds, "seconds");
+    console.log("✅ New lock period:", formatDuration(lockSeconds));
   }
 
   // ─────────────────────────────────────────
@@ -107,10 +128,10 @@ async function main() {
     console.log("\n─── CHANGE VAULT FEE PERCENTAGE ────────────");
     console.log("Current fee     :", currentFeePercent, "%");
     console.log("This is the % of yield admin keeps when add_yield() is called.");
-    console.log("Example: fee = 10% → admin adds 1 SOL yield → 0.9 SOL goes to depositors");
-    console.log("         fee = 0%  → all yield goes to depositors");
+    console.log("Example: fee = 10% → admin adds 1 SOL → 0.9 SOL goes to depositors");
+    console.log("         fee = 0%  → 100% of yield goes to depositors");
 
-    const feeInput = await askQuestion("Enter new fee percentage (0-100, e.g. 0, 5, 10, 20): ");
+    const feeInput = await askQuestion("Enter new fee percentage (0-100): ");
     const fee = parseFloat(feeInput);
 
     if (isNaN(fee) || fee < 0 || fee > 100) {
@@ -122,12 +143,12 @@ async function main() {
     console.log("✅ New vault fee:", newFeePercent, "%");
 
     if (newFeePercent === 0) {
-      console.log("   ℹ️  0% fee — 100% of yield goes to depositors");
+      console.log("   100% of yield goes to depositors");
     } else if (newFeePercent === 100) {
-      console.log("   ⚠️  100% fee — ALL yield stays with admin, depositors get nothing!");
+      console.log("   WARNING: ALL yield stays with admin, depositors earn nothing!");
     } else {
-      console.log("   Admin keeps :", newFeePercent, "% of each yield deposit");
-      console.log("   Depositors get:", 100 - newFeePercent, "% of each yield deposit");
+      console.log("   Admin keeps    :", newFeePercent, "% of each yield deposit");
+      console.log("   Depositors get :", 100 - newFeePercent, "% of each yield deposit");
     }
   }
 
@@ -136,7 +157,7 @@ async function main() {
   // ─────────────────────────────────────────
   console.log("\n═══════════════════════════════════════════");
   console.log("SUMMARY OF CHANGES:");
-  console.log("Lock period :", currentLockDays, "days →", Number(newLockPeriod) / 86400, "days");
+  console.log("Lock period :", formatDuration(currentLockSeconds), "→", formatDuration(Number(newLockPeriod)));
   console.log("Min deposit :", currentMinSol, "SOL →", newMinDeposit.toNumber() / LAMPORTS_PER_SOL, "SOL");
   console.log("Vault fee   :", currentFeePercent, "% →", newFeePercent, "%");
   console.log("───────────────────────────────────────────");
@@ -161,7 +182,7 @@ async function main() {
   console.log("\n═══════════════════════════════════════════");
   console.log("✅ Settings updated successfully!");
   console.log("───────────────────────────────────────────");
-  console.log("Lock period :", Number(updated.lockPeriod) / 86400, "days");
+  console.log("Lock period :", formatDuration(Number(updated.lockPeriod)));
   console.log("Min deposit :", updated.minDeposit.toNumber() / LAMPORTS_PER_SOL, "SOL");
   console.log("Vault fee   :", (updated as any).feePercent, "%");
   console.log("───────────────────────────────────────────");

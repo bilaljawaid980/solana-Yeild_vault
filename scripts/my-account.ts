@@ -52,13 +52,13 @@ async function main() {
   const program = anchor.workspace.Vault as Program<Vault>;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault7"), vaultOwner.toBuffer()], program.programId
   );
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint7"), vaultOwner.toBuffer()], program.programId
   );
   const [depositorStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("depositor5"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
+    [Buffer.from("depositor7"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
     program.programId
   );
 

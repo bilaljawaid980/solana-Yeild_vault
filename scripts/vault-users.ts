@@ -11,10 +11,10 @@ async function main() {
   const vaultOwner = provider.wallet.publicKey;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault7"), vaultOwner.toBuffer()], program.programId
   );
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint7"), vaultOwner.toBuffer()], program.programId
   );
 
   const vaultState = await program.account.vaultState.fetch(vaultStatePDA);
@@ -40,7 +40,7 @@ async function main() {
     },
   ])).filter((d) => {
     const [expectedPDA] = PublicKey.findProgramAddressSync(
-      [Buffer.from("depositor5"), d.account.depositor.toBuffer(), vaultOwner.toBuffer()],
+      [Buffer.from("depositor7"), d.account.depositor.toBuffer(), vaultOwner.toBuffer()],
       program.programId
     );
     return expectedPDA.equals(d.publicKey);

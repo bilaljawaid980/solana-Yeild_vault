@@ -7,11 +7,20 @@ import * as readline from "readline";
 import fs from "fs";
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const LP_DECIMALS = 9;
+const LP_FACTOR = Math.pow(10, LP_DECIMALS); // 1_000_000_000
 
 function askQuestion(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => resolve(answer.trim()));
   });
+}
+
+function formatLp(raw: bigint): string {
+  const whole = raw / BigInt(LP_FACTOR);
+  const frac = raw % BigInt(LP_FACTOR);
+  const fracStr = frac.toString().padStart(LP_DECIMALS, "0").replace(/0+$/, "");
+  return fracStr.length > 0 ? `${whole}.${fracStr}` : `${whole}`;
 }
 
 async function main() {
@@ -50,13 +59,13 @@ async function main() {
   const program = anchor.workspace.Vault as Program<Vault>;
 
   const [vaultStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("vault7"), vaultOwner.toBuffer()], program.programId
   );
   const [lpMintPDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("lp_mint5"), vaultOwner.toBuffer()], program.programId
+    [Buffer.from("lp_mint7"), vaultOwner.toBuffer()], program.programId
   );
   const [depositorStatePDA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("depositor5"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
+    [Buffer.from("depositor7"), userKeypair.publicKey.toBuffer(), vaultOwner.toBuffer()],
     program.programId
   );
 
@@ -72,12 +81,17 @@ async function main() {
   const minDepositLamports = vaultState.minDeposit.toNumber();
   const minDepositSol = minDepositLamports / LAMPORTS_PER_SOL;
   const feePercent = vaultState.feePercent ?? 0;
-  const vaultBalance = vaultState.balance.toNumber();
-  const lpSupply = (await connection.getTokenSupply(lpMintPDA)).value.uiAmount || 0;
+  const vaultBalance = vaultState.balance.toNumber(); // lamports
 
-  // Current LP price — elastic
-  const currentLpPriceLamports = lpSupply > 0
-    ? vaultBalance / lpSupply
+  // ── Use RAW amount (not uiAmount) for all LP math ──
+  const lpSupplyInfo = await connection.getTokenSupply(lpMintPDA);
+  const lpSupplyRaw = BigInt(lpSupplyInfo.value.amount); // e.g. 3_000_000_000
+  const lpSupplyUi = lpSupplyInfo.value.uiAmount || 0;   // e.g. 3.0 (display only)
+
+  // Current elastic LP price in lamports per 1 whole LP (1 LP = LP_FACTOR raw)
+  // price = vaultBalance / lpSupplyUi
+  const currentLpPriceLamports = lpSupplyUi > 0 && vaultBalance > 0
+    ? vaultBalance / lpSupplyUi
     : minDepositLamports;
   const currentLpPriceSol = currentLpPriceLamports / LAMPORTS_PER_SOL;
 
@@ -92,19 +106,21 @@ async function main() {
   console.log("VAULT INFO:");
   console.log("Vault owner   :", vaultOwner.toString());
   console.log("Vault balance :", vaultBalance / LAMPORTS_PER_SOL, "SOL");
-  console.log("Total LP      :", lpSupply, "LP tokens");
-  console.log("LP price now  :", currentLpPriceSol, "SOL per LP");
+  console.log("Total LP      :", lpSupplyUi, "LP");
+  console.log("LP price now  :", currentLpPriceSol.toFixed(9), "SOL per LP  ← elastic");
   console.log("Lock period   :", Number(vaultState.lockPeriod) / 86400, "days");
   console.log("Min deposit   :", minDepositSol, "SOL");
-  console.log("Admin fee     :", feePercent, "% (taken from yield, not from deposits)");
+  console.log("Admin fee     :", feePercent, "% (taken from yield only)");
   console.log("───────────────────────────────────────────");
   console.log("YOUR INFO:");
   console.log("Your wallet   :", userKeypair.publicKey.toString());
   console.log("Your SOL bal  :", solBalance / LAMPORTS_PER_SOL, "SOL");
-  console.log("Status        :", isFirstDeposit ? "🆕 First deposit — account created automatically" : "✅ Returning depositor");
+  console.log("Status        :", isFirstDeposit ? "First deposit — account auto-created" : "Returning depositor");
   console.log("───────────────────────────────────────────");
 
-  const amountInput = await askQuestion(`Enter amount to deposit in SOL (min ${minDepositSol}, multiples only): `);
+  const amountInput = await askQuestion(
+    `Enter amount to deposit in SOL (min ${minDepositSol} SOL, multiples of ${minDepositSol} only): `
+  );
   const solAmount = parseFloat(amountInput);
 
   if (isNaN(solAmount) || solAmount <= 0) {
@@ -121,28 +137,54 @@ async function main() {
 
   if (lamports % minDepositLamports !== 0) {
     console.log("❌ Amount must be a multiple of", minDepositSol, "SOL!");
+    console.log("   Valid amounts:", minDepositSol, "/", minDepositSol * 2, "/", minDepositSol * 3, "SOL etc");
     rl.close(); return;
   }
 
-  if (solBalance < lamports) {
-    console.log("❌ Not enough SOL in your wallet!");
+  if (solBalance < lamports + 10000) {
+    console.log("❌ Not enough SOL in your wallet (need a little extra for fees)!");
     rl.close(); return;
   }
 
-  // Calculate LP to receive using elastic formula
-  const lpToReceive = lpSupply === 0 || vaultBalance === 0
-    ? lamports / minDepositLamports
-    : Math.floor((lamports * lpSupply) / vaultBalance);
+  // ── Calculate LP to receive using RAW bigint math ──
+  // Formula: lpToMint = (lamports × lpSupplyRaw) / vaultBalance
+  // First deposit: lpToMint = (lamports / minDeposit) × LP_FACTOR
+  let lpToReceiveRaw: bigint;
+
+  if (lpSupplyRaw === 0n || vaultBalance === 0) {
+    // First ever deposit — simple formula
+    lpToReceiveRaw = BigInt(Math.floor(lamports / minDepositLamports)) * BigInt(LP_FACTOR);
+  } else {
+    // Elastic formula — full precision with bigint
+    lpToReceiveRaw = (BigInt(lamports) * lpSupplyRaw) / BigInt(vaultBalance);
+  }
+
+  if (lpToReceiveRaw === 0n) {
+    // This should never happen now with decimals=9 and min 0.1 SOL
+    // but guard anyway
+    console.log("❌ Deposit too small — LP minted would be zero.");
+    console.log("   Try a larger amount.");
+    rl.close(); return;
+  }
+
+  const lpToReceiveUi = Number(lpToReceiveRaw) / LP_FACTOR;
+  const shareAfter = lpSupplyUi > 0
+    ? (lpToReceiveUi / (lpSupplyUi + lpToReceiveUi)) * 100
+    : 100;
 
   const unlockDate = new Date(Date.now() + Number(vaultState.lockPeriod) * 1000);
 
   console.log("───────────────────────────────────────────");
   console.log("DEPOSIT SUMMARY:");
   console.log("Deposit amount :", solAmount, "SOL");
-  console.log("LP to receive  :", lpToReceive, "LP tokens");
-  console.log("LP price       :", currentLpPriceSol, "SOL per LP");
+  console.log("LP to receive  :", formatLp(lpToReceiveRaw), "LP");
+  console.log("LP price       :", currentLpPriceSol.toFixed(9), "SOL per LP");
+  console.log("Vault share    :", shareAfter.toFixed(6), "% of vault after deposit");
   console.log("Unlock time    :", unlockDate.toLocaleString());
-  console.log("Admin fee      :", feePercent, "% applies to yield only — NOT to your deposit");
+  console.log("Admin fee      :", feePercent, "% applies to yield only — NOT your deposit");
+  console.log("───────────────────────────────────────────");
+  console.log("NOTE: With 9 decimal LP tokens, any SOL amount >= min deposit");
+  console.log("      always gets a proportional fractional LP share.");
   console.log("───────────────────────────────────────────");
 
   const confirm = await askQuestion("Confirm deposit? (yes/no): ");
@@ -171,20 +213,19 @@ async function main() {
     .rpc();
 
   const vaultAfter = (await program.account.vaultState.fetch(vaultStatePDA)).balance.toNumber();
-  const lpBalance = await connection.getTokenAccountBalance(tokenAccount.address);
+  const lpBalanceInfo = await connection.getTokenAccountBalance(tokenAccount.address);
   const depState = await program.account.depositorState.fetch(depositorStatePDA);
 
   console.log("\n═══════════════════════════════════════════");
   console.log("✅ Deposit successful!");
   console.log("───────────────────────────────────────────");
-  console.log("Deposited     :", solAmount, "SOL");
-  console.log("LP received   :", lpToReceive, "LP tokens");
-  console.log("LP price      :", currentLpPriceSol, "SOL per LP");
-  console.log("Vault before  :", vaultBefore / LAMPORTS_PER_SOL, "SOL");
-  console.log("Vault after   :", vaultAfter / LAMPORTS_PER_SOL, "SOL");
-  console.log("Your LP total :", lpBalance.value.uiAmount, "LP");
-  console.log("Unlock time   :", new Date(depState.unlockTime.toNumber() * 1000).toLocaleString());
-  console.log("Admin fee     :", feePercent, "% applies to yield only");
+  console.log("Deposited      :", solAmount, "SOL");
+  console.log("LP received    :", formatLp(lpToReceiveRaw), "LP");
+  console.log("Your LP total  :", lpBalanceInfo.value.uiAmount, "LP");
+  console.log("LP price       :", currentLpPriceSol.toFixed(9), "SOL per LP");
+  console.log("Vault before   :", vaultBefore / LAMPORTS_PER_SOL, "SOL");
+  console.log("Vault after    :", vaultAfter / LAMPORTS_PER_SOL, "SOL");
+  console.log("Unlock time    :", new Date(depState.unlockTime.toNumber() * 1000).toLocaleString());
   console.log("───────────────────────────────────────────");
   console.log("TX      :", tx);
   console.log("Explorer: https://explorer.solana.com/tx/" + tx + "?cluster=devnet");
