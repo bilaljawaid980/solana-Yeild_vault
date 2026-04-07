@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount};
 
-declare_id!("DmvnbCoGjvP8zfEZeBkrHft2EMQpkjuQ4wZq1AFt7dEL");
+declare_id!("H9HEHWSnZ4e4QnBZ7W8jQ8VQUUEEuTcCHQ5npaZCHMLC");
 
 const FOUR_DAYS_IN_SECONDS: i64 = 4 * 24 * 60 * 60;
 const DEFAULT_MIN_DEPOSIT: u64 = 100_000_000;
